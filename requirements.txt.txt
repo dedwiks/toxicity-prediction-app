@@ -1,0 +1,7 @@
+streamlit
+torch
+rdkit-pypi
+py3Dmol
+numpy
+pandas
+pillow
