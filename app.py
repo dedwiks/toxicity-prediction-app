@@ -177,9 +177,9 @@ def encode_smiles(smiles):
     return torch.tensor([ids]),torch.tensor([mask])
 
 
-def compute_properties(smiles):
+def compute_properties(mol_or_smiles):
 
-    mol = Chem.MolFromSmiles(smiles)
+    mol = mol_or_smiles if isinstance(mol_or_smiles,Chem.Mol) else Chem.MolFromSmiles(mol_or_smiles)
 
     mw = Descriptors.MolWt(mol)
     logp = Descriptors.MolLogP(mol)
@@ -190,9 +190,38 @@ def compute_properties(smiles):
     return [mw,logp,rings,hbd,hba]
 
 
-def detect_substructures(smiles):
+def lipinski_rule(mw,logp,hbd,hba):
 
-    mol = Chem.MolFromSmiles(smiles)
+    results = {
+        "MW < 500":mw < 500,
+        "LogP < 5":logp < 5,
+        "HBD <= 5":hbd <= 5,
+        "HBA <= 10":hba <= 10
+    }
+
+    passed = sum(results.values())
+
+    return results,passed
+
+
+def interpret_risk(prob):
+
+    if prob > 0.7:
+
+        return "High Risk","red"
+
+    elif prob > 0.4:
+
+        return "Moderate Risk","orange"
+
+    else:
+
+        return "Low Risk","green"
+
+
+def detect_substructures(mol_or_smiles):
+
+    mol = mol_or_smiles if isinstance(mol_or_smiles,Chem.Mol) else Chem.MolFromSmiles(mol_or_smiles)
 
     detected=[]
 
@@ -255,7 +284,7 @@ if st.button("Analyze Molecule"):
         input_ids,mask = encode_smiles(smiles)
 
         sub_vec = torch.zeros((1,len(sub_cols)))
-        prop_vec = torch.tensor([compute_properties(smiles)],dtype=torch.float)
+        prop_vec = torch.tensor([compute_properties(mol)],dtype=torch.float)
 
         with torch.no_grad():
 
@@ -269,6 +298,26 @@ if st.button("Analyze Molecule"):
 
         df = df.sort_values("Probability",ascending=False)
 
+        prob = float(df.iloc[0]["Probability"])
+        top_endpoint = df.iloc[0]["Endpoint"]
+        label,color = interpret_risk(prob)
+
+        st.subheader("Toxicity Assessment")
+
+        if color == "red":
+
+            st.error(f"{label} ({prob:.2f})")
+
+        elif color == "orange":
+
+            st.warning(f"{label} ({prob:.2f})")
+
+        else:
+
+            st.success(f"{label} ({prob:.2f})")
+
+        st.caption(f"Highest predicted risk is for {top_endpoint}.")
+
         st.subheader("Toxicity Risk Ranking")
 
         st.bar_chart(df.set_index("Endpoint"))
@@ -279,7 +328,7 @@ if st.button("Analyze Molecule"):
 
         st.subheader("Detected Functional Groups")
 
-        subs = detect_substructures(smiles)
+        subs = detect_substructures(mol)
 
         if len(subs)==0:
 
@@ -297,7 +346,7 @@ if st.button("Analyze Molecule"):
 
         st.subheader("Physicochemical Properties")
 
-        mw,logp,rings,hbd,hba = compute_properties(smiles)
+        mw,logp,rings,hbd,hba = compute_properties(mol)
 
         prop_df = pd.DataFrame({
             "Property":["Molecular Weight","LogP","Rings","HBD","HBA"],
@@ -305,3 +354,19 @@ if st.button("Analyze Molecule"):
         })
 
         st.table(prop_df)
+
+        st.subheader("Drug-likeness (Lipinski Rule)")
+
+        results,passed = lipinski_rule(mw,logp,hbd,hba)
+
+        for rule,status in results.items():
+
+            if status:
+
+                st.success(f"{rule} \u2714")
+
+            else:
+
+                st.error(f"{rule} \u2718")
+
+        st.info(f"Passed {passed}/4 rules")
