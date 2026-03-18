@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import pandas as pd
 import re
+import requests
 from rdkit import Chem
 from rdkit.Chem import Draw, Descriptors, rdMolDescriptors, AllChem
 import py3Dmol
@@ -177,6 +178,47 @@ def encode_smiles(smiles):
     return torch.tensor([ids]),torch.tensor([mask])
 
 
+def name_to_smiles(drug_name):
+
+    cleaned_name = drug_name.strip()
+
+    if not cleaned_name:
+
+        return None
+
+    encoded_name = requests.utils.quote(cleaned_name)
+    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{encoded_name}/property/CanonicalSMILES,ConnectivitySMILES/JSON"
+    headers = {
+        "User-Agent":"Streamlit-Toxicity-App/1.0"
+    }
+
+    try:
+
+        response = requests.get(url,headers=headers,timeout=10)
+        print("PubChem status:",response.status_code)
+        print("Response preview:",response.text[:100])
+
+        if response.status_code != 200:
+
+            return None
+
+        data = response.json()
+        properties = data.get("PropertyTable",{}).get("Properties",[])
+
+        if not properties:
+
+            return None
+
+        props = properties[0]
+        smiles = props.get("CanonicalSMILES") or props.get("ConnectivitySMILES")
+
+        return smiles
+
+    except (requests.RequestException,ValueError,TypeError):
+
+        return None
+
+
 def compute_properties(mol_or_smiles):
 
     mol = mol_or_smiles if isinstance(mol_or_smiles,Chem.Mol) else Chem.MolFromSmiles(mol_or_smiles)
@@ -239,17 +281,54 @@ def detect_substructures(mol_or_smiles):
 
 st.title("Molecular Toxicity Analysis Dashboard")
 
-smiles = st.text_input("Enter SMILES")
+input_mode = st.radio("Select Input Type",["SMILES","Drug Name"])
+
+if input_mode == "SMILES":
+
+    user_input = st.text_input("Enter SMILES")
+
+else:
+
+    user_input = st.text_input("Enter Drug Name")
 
 if st.button("Analyze Molecule"):
 
-    mol = Chem.MolFromSmiles(smiles)
+    smiles = None
+    mol = None
 
-    if mol is None:
+    if input_mode == "SMILES":
 
-        st.error("Invalid SMILES")
+        smiles = user_input.strip()
+
+        if smiles:
+
+            mol = Chem.MolFromSmiles(smiles)
+
+        if mol is None:
+
+            st.error("Invalid SMILES")
 
     else:
+
+        drug_name = user_input.strip()
+
+        if drug_name:
+
+            smiles = name_to_smiles(drug_name)
+
+            if smiles is not None:
+
+                mol = Chem.MolFromSmiles(smiles)
+
+        if mol is None:
+
+            st.error("Drug not found")
+
+        else:
+
+            st.info(f"Converted '{drug_name}' -> {smiles}")
+
+    if mol is not None:
 
         col1,col2 = st.columns(2)
 

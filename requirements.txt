@@ -1,4 +1,5 @@
 streamlit
+requests
 torch
 rdkit-pypi
 py3Dmol
